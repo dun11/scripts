@@ -1,0 +1,360 @@
+// ==UserScript==
+// @name         twitter translater by google
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  translate tweets into Chinese by google
+// @author       HolynnChen
+// @match        https://twitter.com/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @require      https://cdn.bootcss.com/crypto-js/3.1.9-1/core.min.js
+// @require      https://cdn.bootcss.com/crypto-js/3.1.9-1/md5.min.js
+// ==/UserScript==
+const transdict={'谷歌翻译':translate_gg,'沪江翻译':translate_hj,'爱词霸翻译':translate_icib,'必应翻译':translate_biying,'有道翻译':translate_youdao,'腾讯翻译':translate_tencent,'关闭翻译':e=>e.className+=" js_translate"};
+const startup={'谷歌翻译':translate_gg_startup,'有道翻译':translate_youdao_startup,'腾讯翻译':translate_tencent_startup};
+const enable_pass_lang=GM_getValue('enable_pass_lang',false);
+(function() {
+    'use strict';
+    let choice=GM_getValue('translate_choice','谷歌翻译');
+    let main=_=>{
+        let temp=makeArray(document.querySelectorAll('.tweet-text,div[lang]')).filter(x=>x.className.indexOf('js_translate')==-1);
+        for(let i=0;i<temp.length;i++){
+            temp[i].className+=" js_translate";
+            if(baseText(temp[i]).length==0)continue;
+            if(sessionStorage.getItem(choice+'-'+baseText(temp[i]))){
+                ce_text(temp[i],choice,sessionStorage.getItem(choice+'-'+baseText(temp[i])));
+            }else{
+                pass_lang(temp[i]).then(e=>transdict[choice](e));
+            }
+        }
+    };
+    if(!startup[choice]){
+        setInterval(main,50)
+    }else{
+        (new Promise(startup[choice])).then(_=>setInterval(main,50))
+    }
+    let select=document.createElement("select");
+    select.id='js_translate';
+    select.style='z-index:99999;height:35px;width:100px;background-color:#fff;position:fixed;border-radius:17.5px;right:9px;top:9px;text-align-last:center;color:#000000';
+    select.onchange=_=>{
+        if(select.value=='more'){
+            select.value=choice;
+            dialog.showModal()
+            return;
+        }
+        choice=select.value;
+        GM_setValue('translate_choice',choice);
+        history.go(0)
+    };
+    for(let i in transdict)select.innerHTML+='<option value="'+i+'">'+i+'</option>';
+    select.innerHTML+='<option value="more">更多设置</option>'
+    let dialog=document.createElement("dialog");
+    dialog.style='padding:0;border-radius:10px';
+    //dialog.onclick=dialog.close;
+    dialog.addEventListener('click',event=>{if(event.target===dialog)dialog.close()})
+    dialog.innerHTML='<div style="min-height:10vh;min-width:10vw;display:flex;flex-direction:column;align-items:center;padding:10px;border-radius:4px"><h4 style="margin:5px 0">设置面板</h4><p><input type="checkbox" name="enable_pass_lang">不翻译中文推特</p></div>';
+    let inputs=dialog.querySelectorAll('input');
+    let title=dialog.querySelector('h4');
+    for(let i of inputs){
+        if(GM_getValue(i.name,false))i.checked=true;
+        i.onclick=_=>{
+            GM_setValue(i.name,i.checked);
+            switch(i.name)
+            {
+                case 'enable_pass_lang':
+                    if(i.checked)sessionStorage.clear();
+                    title.innerText="控制面板（请刷新以应用）"
+                    break;
+                default:
+                    return
+            }
+        }
+    }
+    document.body.appendChild(dialog);
+    document.body.appendChild(select);
+    document.querySelector('#js_translate option[value='+choice+']').selected=true;
+})();
+function makeArray(arr){
+    if(arr.item){
+        var len = arr.length;
+        var array = [];
+        while(len--){
+            array[len] = arr[len];
+        }
+        return array;
+    }
+    return Array.prototype.slice.call(arr);
+}
+function baseText(element){
+    return Array.prototype.map.call(element.querySelectorAll('span'),e=>e.innerText).join('')
+}
+function tk(a){
+    var b=sessionStorage.getItem('google_tkk');
+    var d = b.split(".");
+    b = Number(d[0]) || 0;
+    for (var e = [], f = 0, g = 0; g < a.length; g++) {
+        var k = a.charCodeAt(g);
+        128 > k ? e[f++] = k : (2048 > k ? e[f++] = k >> 6 | 192 : (55296 == (k & 64512) && g + 1 < a.length && 56320 == (a.charCodeAt(g + 1) & 64512) ? (k = 65536 + ((k & 1023) << 10) + (a.charCodeAt(++g) & 1023),
+        e[f++] = k >> 18 | 240,
+        e[f++] = k >> 12 & 63 | 128) : e[f++] = k >> 12 | 224,
+        e[f++] = k >> 6 & 63 | 128),
+        e[f++] = k & 63 | 128)
+    }
+    a = b;
+    for (f = 0; f < e.length; f++)a = Fo(a+e[f], "+-a^+6");
+    a = Fo(a, "+-3^+b+-f");
+    a ^= Number(d[1]) || 0;
+    0 > a && (a = (a & 2147483647) + 2147483648);
+    a %= 1E6;
+    return a.toString() + "." + (a ^ b)
+}
+function Fo(a, b) {
+    for (var c = 0; c < b.length - 2; c += 3) {
+        var d = b.charAt(c + 2);
+        d = "a" <= d ? d.charCodeAt(0) - 87 : Number(d);
+        d = "+" == b.charAt(c + 1) ? a >>> d : a << d;
+        a = "+" == b.charAt(c) ? a + d & 4294967295 : a ^ d
+    }
+    return a
+}
+function ce_text(e,name,text){//change element text
+    if(text.length==0)text='翻译异常'
+    e.innerHTML+='\n\n-----------'+name+'-----------\n\n'+text
+}
+function translate_gg(e,error){
+    let myname='谷歌翻译'
+    GM_xmlhttpRequest({
+        method:"GET",
+        url:'https://translate.google.com/translate_a/single?client=webapp&sl=auto&tl=zh-CN&hl=zh-CN&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&source=btn&ssel=0&tsel=0&kc=0&tk='+tk(baseText(e))+'&q='+encodeURIComponent(baseText(e)),
+        onload:(data)=>{
+            let s=''
+            try{
+                data=JSON.parse(data.responseText);
+                s=data[0].map(x=>x[0]||'').join('')
+                sessionStorage.setItem(myname+'-'+baseText(e),s)
+            }catch(err){
+                console.log(data.responseText)
+                if(error){ce_text(e,mynanm,'翻译出错');return}
+                setTimeout(_=>translate_gg(e,true),3000)
+                return
+            }
+            ce_text(e,myname,s)
+    }})
+}
+function translate_gg_startup(reslove,reject){
+    if(!sessionStorage.getItem('google_tkk')){
+        GM_xmlhttpRequest({
+            method:'GET',
+            url:'https://translate.google.com',
+            onload:function(res){
+                sessionStorage.setItem('google_tkk',res.responseText.match(/tkk:'.*?(?=')/g)[0].slice(5))
+                reslove()
+            }
+        });
+    }else{
+        reslove()
+    }
+}
+
+function translate_hj(e,error){
+    let myname='沪江翻译'
+    GM_xmlhttpRequest({
+        method:"POST",
+        url:'https://dict.hjenglish.com/v10/dict/translation/jp/cn',
+        data:'content='+encodeURIComponent(baseText(e).replace('twitter','推特')),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            'Cookie':'HJ_UID=0;'
+        },
+        onload:(data)=>{
+            let s=''
+            try{
+                data=JSON.parse(data.responseText);
+                s=data.data.content;
+                sessionStorage.setItem(myname+'-'+baseText(e),s)
+            }catch(err){
+                console.log(data.responseText)
+                console.log(baseText(e))
+                if(error){ce_text(e,myname,'翻译出错');return}
+                setTimeout(_=>translate_hj(e,true),3000)
+                return
+            }
+            ce_text(e,myname,s)
+    }})
+}
+function translate_icib(e,error){
+    let myname='爱词霸翻译'
+    e.className+=" js_translate";
+    GM_xmlhttpRequest({
+        method:"POST",
+        url:'http://fy.iciba.com/ajax.php?a=fy',
+        data:'f=auto&t=auto&w='+encodeURIComponent(baseText(e)),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        onload:(data)=>{
+            let s=''
+            try{
+                data=JSON.parse(data.responseText);
+                s=data.content.out;
+                sessionStorage.setItem(myname+'-'+baseText(e),s)
+            }catch(err){
+                console.log(data.responseText)
+                console.log(baseText(e))
+                if(error){ce_text(e,myname,'翻译出错');return}
+                setTimeout(_=>translate_icib(e,true),3000)
+                return
+            }
+            ce_text(e,myname,s)
+    }})
+}
+function translate_biying(e,error){
+    let myname='必应翻译'
+    GM_xmlhttpRequest({
+        method:"POST",
+        url:'https://cn.bing.com/ttranslate',
+        data:'from=ja&to=zh-CHS&text='+encodeURIComponent(baseText(e)),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        onload:(data)=>{
+            let s=''
+            try{
+                data=JSON.parse(data.responseText);
+                s=data.translationResponse;
+                sessionStorage.setItem(myname+'-'+baseText(e),s)
+            }catch(err){
+                console.log(data.responseText)
+                console.log(baseText(e))
+                if(error){ce_text(e,myname,'翻译出错');return}
+                setTimeout(_=>translate_biying(e,true),3000)
+                return
+            }
+            ce_text(e,myname,s)
+    }})
+}
+function youdao_data(text){
+    let ts=""+(new Date).getTime(),salt=ts+parseInt(10 * Math.random(), 10);
+    let result=`i=${encodeURIComponent(text)}&from=AUTO&to=AUTO&smartresult=dict&client=fanyideskweb&salt=${salt}&sign=${CryptoJS.MD5("fanyideskweb"+text+salt+sessionStorage.getItem('youdao_key'))}&ts=${ts}&doctype=json&version=2.1&keyfrom=fanyi.web&action=FY_BY_REALTlME&typoResult=false`
+    return result
+}
+function translate_youdao(e,error){
+    let myname='有道翻译'
+    GM_xmlhttpRequest({
+        method:"POST",
+        url:'http://fanyi.youdao.com/translate_o?smartresult=dict&smartresult=rule',
+        data:youdao_data(baseText(e)),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Referer": "http://fanyi.youdao.com/",
+            "User-Agent": "test",
+        },
+        onload:(data)=>{
+            let s=''
+            try{
+                data=JSON.parse(data.responseText);
+                s=data.translateResult.map(e=>e.map(t=>t.tgt).join('')).join('\n');
+                sessionStorage.setItem(myname+'-'+baseText(e),s)
+            }catch(err){
+                console.log(data,data.responseText)
+                if(error){ce_text(e,myname,'翻译出错');return}
+                setTimeout(_=>translate_youdao(e,true),3000)
+                return
+            }
+            ce_text(e,myname,s)
+    }})
+}
+function translate_youdao_startup(reslove,reject){
+    if(!sessionStorage.getItem('youdao_key')){
+        GM_xmlhttpRequest({
+            method:'GET',
+            url:'http://fanyi.youdao.com',
+            onload:function(res){
+                GM_xmlhttpRequest({
+                    method:'GET',
+                    url:res.responseText.match(/http.*?fanyi.min.js/g)[0],
+                    onload:function(res){
+                        sessionStorage.setItem('youdao_key',res.responseText.match(/fanyideskweb.{6}".*?(?=")/g)[0].slice(19));
+                        reslove()
+                    }
+                })
+            }
+        });
+    }else{
+        reslove()
+    }
+}
+function translate_tencent(e,error){
+    let myname='腾讯翻译'
+    let qtk=sessionStorage.getItem('tencent_qtk'),qtv=sessionStorage.getItem('tencent_qtv');
+    if(qtk && qtv){
+        GM_xmlhttpRequest({
+            method:'POST',
+            url:'https://fanyi.qq.com/api/translate',
+            data:`source=auto&target=zh&sourceText=${encodeURIComponent(baseText(e))}&qtv=${encodeURIComponent(qtv)}&qtk=${encodeURIComponent(qtk)}&sessionUuid=translate_uuid${(new Date).getTime()}`,
+            headers: {
+                "Origin":"https://fanyi.qq.com",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": "https://fanyi.qq.com/"
+            },
+            onload:(data)=>{
+                let s=''
+                try{
+                    data=JSON.parse(data.responseText);
+                    s=data.translate.records.map(e=>e.targetText).join('');
+                    sessionStorage.setItem(myname+'-'+baseText(e),s)
+                }catch(err){
+                    console.log(baseText(e));
+                    if(error){ce_text(e,myname,'翻译出错');return}
+                    setTimeout(_=>translate_tencent(e,true),3000)
+                    return
+                }
+                ce_text(e,myname,s)},
+            onerror:(err)=>{
+                if(error){ce_text(e,myname,'翻译出错');return}
+                setTimeout(_=>translate_tencent(e,true),3000)
+            }
+        });
+    }else{
+        console.log('无法获取qtk与qtv')
+    }
+}
+function translate_tencent_startup(reslove,reject){
+    if(!sessionStorage.getItem('tencent_qtk') || !!sessionStorage.getItem('tencent_qtv')){
+        GM_xmlhttpRequest({
+            method:'GET',
+            url:'https://fanyi.qq.com',
+            onload:function(res){
+                sessionStorage.setItem('tencent_qtv',res.responseText.match(/qtv=.*?(?=")/g)[0].slice(4))
+                sessionStorage.setItem('tencent_qtk',res.responseText.match(/qtk=.*?(?=")/g)[0].slice(4))
+                reslove()
+            }
+        });
+    }else{
+        reslove()
+    }
+}
+function pass_lang(e){
+    return new Promise((reslove,reject)=>{
+        if(!enable_pass_lang){
+            reslove(e);
+            return
+        }
+        GM_xmlhttpRequest({
+            method:"POST",
+            url:'https://fanyi.baidu.com/langdetect',
+            data:`query=${encodeURIComponent(baseText(e).replace(/[\uD800-\uDBFF]$/, "").slice(0,50))}`,
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            onload:(data)=>{
+                try{
+                    data=JSON.parse(data.responseText);
+                    if(data.lan!='zh')reslove(e);
+                }catch(err){
+                    reject(err);
+                }
+        }})
+    })
+}
