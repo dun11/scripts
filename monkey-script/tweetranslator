@@ -1,0 +1,289 @@
+// ==UserScript==
+// @name         tweetranslator
+// @namespace    http://tampermonkey.net/
+// @version      0.1
+// @description  translate tweets by google....
+// @author       dunnnn.com, chat.openai.com
+// @match        *://*.twitter.com/*
+// @match        *://*.youtube.com/*
+// @match        *://*.facebook.com/*
+// @match        *://*.reddit.com/*
+// @match        *://*.5ch.net/*
+// @match        *://*.discord.com/*
+// @match        *://*.telegram.org/*
+// @connect      fanyi.baidu.com
+// @connect      translate.google.com
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @require      https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js
+// @require      https://cdn.jsdelivr.net/npm/js-base64@3.7.4/base64.min.js
+// @run-at       document-body
+// ==/UserScript==
+
+debugger;
+
+let sessionStorage = window.sessionStorage;
+let startup={};
+let remove_url = true
+let globalProcessingSave=[];
+
+let rules={
+    'twitter':[{
+        name:'twitter.com',
+        matcher:/https:\/\/[a-zA-Z.]*?twitter\.com/,
+        selector:baseSelector('article div[dir="auto"][lang],div[data-testid=birdwatch-pivot]>div[dir=ltr]'),
+        textGetter:baseTextGetter,
+        textSetter:baseTextSetter
+    }],
+    'youtube':[
+        {
+            name:'youtube pc通用',
+            matcher:/https:\/\/www.youtube.com\/watch/,
+            selector:()=>{
+                let result=[...document.querySelectorAll('#content>#content-text,#content>#description>.content,#comment-content')].filter(item=>item.__data&&item.__data.text).filter(item=>item.childNodes.length==item.__data.text.runs.length);
+                return result;
+            },
+            textGetter:element=>remove_url?url_filter(element.innerText):element.innerText,
+            textSetter:(element,name,text)=>{
+                element.updateText_([...element.__data.text.runs,{text:`\n`+text}]);
+                element.parentNode.parentNode.removeAttribute('collapsed');
+            }
+        },
+        {
+            name:'youtube 短视频',
+            matcher:/https:\/\/(www|m).youtube.com\/shorts/,
+            selector:baseSelector("#comment-content #content-text,.comment-content .comment-text"),
+            textGetter:baseTextGetter,
+            textSetter:baseTextSetter
+        }
+    ],
+    'facebook':[{
+        name:'facebook通用',
+        matcher:/https:\/\/www.facebook.com\/.+/,
+        selector: baseSelector('div[data-ad-comet-preview=message],li>div>div[role=article] div>span[dir=auto]'),
+        textGetter:element=>{
+            let key = Object.keys(document.querySelector('div>div')||{}).find(item=>item.match('^__reactProps'));
+            let content = element.tagName==="DIV"?element.innerText:element[key].children.props.textWithEntities.text;
+            if(element.tagName==="SPAN"){
+                let more = element.querySelector('div>div[role=button]');
+                if(more)more.click();
+            }
+            return content;
+        },
+        textSetter:(e,name,text)=>setTimeout(baseTextSetter,0,e,name,text)
+    }],
+    'reddit':[{
+        name:'reddit通用',
+        matcher:/https:\/\/www.reddit.com\/.*/,
+        selector:baseSelector('a[data-click-id=body]:not([class=undefined]),.RichTextJSON-root'),
+        textGetter:baseTextGetter,
+        textSetter:baseTextSetter
+    }],
+    '5ch':[{
+        name:'5ch评论',
+        matcher:/http(|s):\/\/.*?.5ch.net\/.+/,
+        selector:baseSelector('.post>.message'),
+        textGetter:baseTextGetter,
+        textSetter:baseTextSetter
+    }],
+    'discord':[{
+        name:'discord聊天',
+        matcher:/https:\/\/discord.com\/.+/,
+        selector:baseSelector('div[class*=messageContent]'),
+        textGetter:baseTextGetter,
+        textSetter:baseTextSetter
+    }],
+    'telegram':[
+        {
+            name:'telegram聊天新',
+            matcher:/https:\/\/.*?.telegram.org\/z\//,
+            selector:baseSelector('p.text-content[dir=auto],div.text-content'),
+            textGetter:e=>Array.from(e.childNodes).filter(item=>!item.className).map(item=>item.nodeName==="BR"?"\n":item.textContent).join(''),
+            textSetter:baseTextSetter
+        },
+        {
+            name:'telegram聊天',
+            matcher:/https:\/\/.*?.telegram.org\/.+/,
+            selector:baseSelector('div.message[dir=auto],div.im_message_text'),
+            textGetter:e=>Array.from(e.childNodes).filter(item=>!item.className).map(item=>item.nodeValue||item.innerText).join(" "),
+            textSetter:baseTextSetter
+        }
+    ],
+};
+
+
+(function() {
+    'use strict';
+    let GetActiveRule = () =>
+  Object.values(rules)
+    .flatMap(group => group.filter(item => GM_getValue(`enable_rule:${item.matcher.source}`, true)))
+    .find(item => item.matcher.test(document.location.href))
+
+
+    let url=document.location.href;
+    let rule=GetActiveRule();
+    setInterval(()=>{
+        if(document.location.href!=url){
+            url=document.location.href;
+        }
+    },200)
+
+    let main=_=>{
+        if(!rule)return;
+        let choice='translate.google';
+        let temp=[...new Set(rule.selector())];
+        for(let i=0;i<temp.length;i++){
+            let now=temp[i];
+            if(globalProcessingSave.includes(now))continue;
+            globalProcessingSave.push(now);
+            let text=remove_url?url_filter(rule.textGetter(now)):rule.textGetter(now);
+            if(text.length==0)continue;
+            if(sessionStorage.getItem(choice+'-'+text)){
+                rule.textSetter(now,choice,sessionStorage.getItem(choice+'-'+text));
+                removeItem(globalProcessingSave,now)
+            }else{
+                ignoreMandarin(text).then(lang=>translator(text,lang)).then(s=>{
+                    rule.textSetter(now,choice,s);
+                    removeItem(globalProcessingSave,now);
+                })
+            }
+        }
+    };
+    PromiseRetryWrap(startup['translate.google']).then(()=>{document.js_translater=setInterval(main,20)});
+})();
+
+//--综合工具区--start
+function removeItem(arr,item){
+    let index=arr.indexOf(item);
+    if(index>-1)arr.splice(index,1);
+}
+
+function baseSelector(selector){
+    return ()=>{
+        let items = document.querySelectorAll(selector);
+        return Array.from(items).filter(item=>{
+            let node = item.querySelector('[data-translate]');
+            return !(node && node.parentNode === item);
+        })
+    }
+}
+
+function baseTextGetter(e){
+    return e.innerText;
+}
+
+function baseTextSetter(e,name,text){//change element text
+    if((text||"").length==0)text='= Ｅ R　R　O　R　＝';
+    let spanNode = document.createElement('span');
+    spanNode.style.fontFamily = "Microsoft YaHei";
+    spanNode.style.fontSize = "16px";
+    spanNode.style.color = "#333333";
+    spanNode.innerText = '\n\n❝' + text + '❞\n';
+    spanNode.dataset.translate="processed";
+    e.appendChild(spanNode);
+}
+
+function url_filter(text){
+    return text.replace(/(https?|ftp|file):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]/g,'');
+}
+
+async function ignoreMandarin(raw){//确认是否为中文，是则中断promise
+    if(false)return;
+    try{
+        let result = await detectLanguage(raw)
+        if(result=='zh')return new Promise(()=>{});
+        return result
+    }catch(err){
+        console.log(err);
+        return
+    }
+    return
+}
+
+async function detectLanguage(raw){
+    let options = {
+        method:"POST",
+        url:'https://fanyi.baidu.com/langdetect',
+        data:'query='+encodeURIComponent(raw.replace(/[\uD800-\uDBFF]$/, "").slice(0,50)),
+        headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+    }
+    let res = await Request(options);
+    try{
+        return JSON.parse(res.responseText).lan
+    }catch(err){
+        console.log(err);
+        return
+    }
+}
+
+
+function guid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        let r = Math.random()*16|0, v = c == 'x' ? r : (r&0x3|0x8);
+        return v.toString(16);
+    });
+}
+//--综合工具区--end
+
+//--translate.google--start
+async function translator(raw){
+    let options = {
+        method:"POST",
+        url:"https://translate.google.com/_/TranslateWebserverUi/data/batchexecute",
+        data: "f.req="+encodeURIComponent(JSON.stringify([[["MkEWBc",JSON.stringify([[raw,"auto","zh",true],[null]]),null,"generic"]]])),
+        headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            "Host": "translate.google.com",
+        },
+        anonymous:true,
+        nocache:true,
+    }
+    return await BaseTranslate('translate.google',raw,options,res=>JSON.parse(JSON.parse(res.slice(res.indexOf('[')))[0][2])[1][0][0][5].map(item=>item[0]).join(''))
+}
+//--translate.google--end
+
+
+//--异步请求包装工具--start
+async function PromiseRetryWrap(task,options,...values){
+    let {RetryTimes,ErrProcesser} = options||{};
+    let retryTimes = RetryTimes||5;
+    let usedErrProcesser = ErrProcesser || (err =>{throw err});
+    if(!task)return;
+    while(true){
+        try{
+            return await task(...values);
+        }catch(err){
+            if(!--retryTimes){
+                console.log(err);
+                return usedErrProcesser(err);
+            }
+        }
+    }
+}
+
+async function BaseTranslate(name,raw,options,processer){
+    let toDo = async ()=>{
+        var tmp;
+        try{
+            let data = await Request(options);
+            tmp = data.responseText;
+            let result = await processer(tmp);
+            if(result)sessionStorage.setItem(name+'-'+raw,result);
+            return result
+        }catch(err){
+            throw {
+                responseText: tmp,
+                err: err
+            }
+        }
+    }
+    return await PromiseRetryWrap(toDo,{RetryTimes:3,ErrProcesser:()=>"ERROR"})
+}
+
+function Request(options){
+    return new Promise((reslove,reject)=>GM_xmlhttpRequest({...options,onload:reslove,onerror:reject}))
+}
+//--异步请求包装工具--end
